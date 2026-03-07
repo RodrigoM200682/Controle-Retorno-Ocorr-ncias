@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 # CONFIGURAÇÃO
 # =========================================================
 st.set_page_config(
-    page_title="Controle de Reclamações de Cliente - V4",
-    page_icon="📋",
+    page_title="CONTROLE DE RETORNO DE RECLAMAÇÕES DE CLIENTES - CRRC RS ",
+    page_icon="<>",
     layout="wide",
 )
 
