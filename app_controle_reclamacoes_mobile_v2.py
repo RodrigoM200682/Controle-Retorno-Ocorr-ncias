@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 # CONFIGURAÇÃO
 # =========================================================
 st.set_page_config(
-    page_title="Controle de Retorno de Reclamações de Cliente - CRRC ",
+    page_title="Retorno de Reclamações de Clientes - RRC-RS 2026_v_12",
     page_icon="📋",
     layout="wide",
 )
@@ -493,14 +493,22 @@ st.markdown("""
 # =========================================================
 # TOPO
 # =========================================================
-st.title("📋 Controle de Reclamações de Cliente - V4")
+st.title("📋 Retorno de Reclamações de Clientes - RRC-RS 2026_v_12")
 st.caption("Banco de dados do app com backup automático, log de exclusão e opção de download dos backups.")
 
 with st.sidebar:
     st.header("Filtros")
     termo = st.text_input("Buscar por código, cliente ou título")
     status_filtro = st.selectbox("Status geral", ["Todos"] + STATUS_GERAIS)
-    responsavel_filtro = st.text_input("Filtrar responsável interno")
+    base_resp_filtro = listar_ocorrencias()
+    if not base_resp_filtro.empty:
+        lista_responsaveis = sorted([
+            str(x) for x in base_resp_filtro["responsavel_interno"].fillna("").astype(str).unique().tolist()
+            if str(x).strip() != ""
+        ])
+    else:
+        lista_responsaveis = []
+    responsavel_filtro = st.selectbox("Responsável", ["Todos"] + lista_responsaveis)
     st.markdown("---")
     st.write("**Cabeçalho padrão de importação**")
     st.code(" | ".join(HEADERS_IMPORTACAO_PADRAO))
@@ -556,9 +564,8 @@ with abas[0]:
             ]
         if status_filtro != "Todos":
             df = df[df["status_geral"] == status_filtro]
-        if responsavel_filtro:
-            rf = responsavel_filtro.lower()
-            df = df[df["responsavel_interno"].astype(str).str.lower().str.contains(rf, na=False)]
+        if responsavel_filtro != "Todos":
+            df = df[df["responsavel_interno"].astype(str) == responsavel_filtro]
 
         visao = df[["codigo", "data_abertura", "cliente", "titulo", "quantidade", "responsavel_interno", "status_geral"]].copy()
         visao.columns = ["Código", "Data", "Cliente", "Título", "Quantidade", "Responsável", "Status geral"]
@@ -727,8 +734,18 @@ with abas[4]:
     if base.empty:
         st.info("Não há dados para gerar dashboard.")
     else:
+        base = base.copy()
+        base["responsavel_interno"] = base["responsavel_interno"].fillna("Não informado")
+
+        atrasadas_lista = []
+        for _, row in base.iterrows():
+            atrasada = any("🔴" in status_semaforo(row.to_dict(), etapa) for etapa in ETAPAS)
+            atrasadas_lista.append("Sim" if atrasada else "Não")
+        base["em_atraso"] = atrasadas_lista
+
         col_a, col_b = st.columns(2)
         with col_a:
+            st.markdown("**Ocorrências por mês**")
             serie_mes = base.groupby("mes_ref").size().sort_index()
             fig = plt.figure(figsize=(8, 4))
             ax = fig.add_subplot(111)
@@ -739,6 +756,7 @@ with abas[4]:
             plt.tight_layout()
             st.pyplot(fig)
         with col_b:
+            st.markdown("**Ocorrências por cliente**")
             serie_cli = base.groupby("cliente").size().sort_values(ascending=False).head(10)
             fig = plt.figure(figsize=(8, 4))
             ax = fig.add_subplot(111)
@@ -746,6 +764,29 @@ with abas[4]:
             ax.set_xlabel("Cliente")
             ax.set_ylabel("Ocorrências")
             plt.xticks(rotation=45, ha="right")
+            plt.tight_layout()
+            st.pyplot(fig)
+
+        col_c, col_d = st.columns(2)
+        with col_c:
+            st.markdown("**Ocorrências por responsável**")
+            serie_resp = base.groupby("responsavel_interno").size().sort_values(ascending=False).head(10)
+            fig = plt.figure(figsize=(8, 4))
+            ax = fig.add_subplot(111)
+            ax.bar(serie_resp.index, serie_resp.values)
+            ax.set_xlabel("Responsável")
+            ax.set_ylabel("Ocorrências")
+            plt.xticks(rotation=45, ha="right")
+            plt.tight_layout()
+            st.pyplot(fig)
+        with col_d:
+            st.markdown("**Ocorrências em atraso**")
+            serie_atraso = base.groupby("em_atraso").size().reindex(["Sim", "Não"], fill_value=0)
+            fig = plt.figure(figsize=(8, 4))
+            ax = fig.add_subplot(111)
+            ax.bar(serie_atraso.index, serie_atraso.values)
+            ax.set_xlabel("Situação")
+            ax.set_ylabel("Ocorrências")
             plt.tight_layout()
             st.pyplot(fig)
 
