@@ -50,6 +50,11 @@ STATUS_GERAIS = [
     "Concluída",
 ]
 
+MESES_ABREV = {
+    1: "jan", 2: "fev", 3: "mar", 4: "abr", 5: "mai", 6: "jun",
+    7: "jul", 8: "ago", 9: "set", 10: "out", 11: "nov", 12: "dez"
+}
+
 HEADERS_IMPORTACAO_PADRAO = [
     "Código",
     "Título",
@@ -68,6 +73,40 @@ def get_conn():
 
 def now_str():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def formatar_data_br(valor):
+    data = pd.to_datetime(valor, errors="coerce")
+    if pd.isna(data):
+        return ""
+    return data.strftime("%d/%m/%Y")
+
+def rotulo_mes_abrev(valor):
+    data = pd.to_datetime(valor, errors="coerce")
+    if pd.isna(data):
+        return ""
+    return f"{MESES_ABREV.get(data.month, '')}/{str(data.year)[-2:]}"
+
+def preparar_barras_com_rotulos(ax, serie, rotacao=0, alinhamento="center", cores=None):
+    if cores is None:
+        barras = ax.bar(serie.index, serie.values)
+    else:
+        barras = ax.bar(serie.index, serie.values, color=cores)
+    ax.set_ylabel("")
+    ax.set_yticks([])
+    ax.spines["left"].set_visible(False)
+    ax.tick_params(axis="y", left=False, labelleft=False)
+    for barra in barras:
+        altura = barra.get_height()
+        ax.annotate(
+            f"{int(altura)}",
+            xy=(barra.get_x() + barra.get_width() / 2, altura),
+            xytext=(0, 3),
+            textcoords="offset points",
+            ha="center",
+            va="bottom"
+        )
+    plt.xticks(rotation=rotacao, ha=alinhamento)
+    return barras
 
 def column_exists(table_name: str, column_name: str) -> bool:
     conn = get_conn()
@@ -294,7 +333,7 @@ def gerar_resumo_semaforo(ocorrencia):
             "Etapa": etapa,
             "Prazo": "" if prazo is None else prazo.strftime("%d/%m/%Y"),
             "Status": status_semaforo(ocorrencia, etapa),
-            "Enviado em": "" if not retorno else str(retorno.get("data_envio") or "")
+            "Enviado em": "" if not retorno else formatar_data_br(retorno.get("data_envio") or "")
         })
     return pd.DataFrame(dados)
 
@@ -401,7 +440,7 @@ def importar_ocorrencias_excel(arquivo_excel):
             data_abertura = pd.to_datetime(date.today())
 
         responsavel = row.get("Responsável", "")
-        responsavel = "" if pd.isna(responsavel) else str(responsavel)
+        responsavel = "Avaliação" if pd.isna(responsavel) or str(responsavel).strip() == "" else str(responsavel)
         descricao = row.get("Descrição", "")
         descricao = "" if pd.isna(descricao) else str(descricao)
         quantidade = normalizar_quantidade(row.get("Quantidade não conforme", 0))
@@ -474,7 +513,7 @@ def montar_base_dashboard():
     ocorr = ocorr.copy()
     ocorr["data_abertura"] = pd.to_datetime(ocorr["data_abertura"], errors="coerce")
     ocorr["mes_ref"] = ocorr["data_abertura"].dt.strftime("%m/%Y")
-    ocorr["responsavel_interno"] = ocorr["responsavel_interno"].fillna("Não informado")
+    ocorr["responsavel_interno"] = ocorr["responsavel_interno"].fillna("").replace("", "Avaliação")
     return ocorr
 
 # =========================================================
@@ -504,7 +543,7 @@ with st.sidebar:
     if not base_resp_filtro.empty:
         lista_responsaveis = sorted([
             str(x) for x in base_resp_filtro["responsavel_interno"].fillna("").astype(str).unique().tolist()
-            if str(x).strip() != ""
+            True
         ])
     else:
         lista_responsaveis = []
@@ -568,6 +607,8 @@ with abas[0]:
             df = df[df["responsavel_interno"].astype(str) == responsavel_filtro]
 
         visao = df[["codigo", "data_abertura", "cliente", "titulo", "quantidade", "responsavel_interno", "status_geral"]].copy()
+        visao["data_abertura"] = visao["data_abertura"].apply(formatar_data_br)
+        visao["responsavel_interno"] = visao["responsavel_interno"].fillna("").replace("", "Avaliação")
         visao.columns = ["Código", "Data", "Cliente", "Título", "Quantidade", "Responsável", "Status geral"]
         st.dataframe(visao, use_container_width=True, hide_index=True)
     else:
@@ -605,7 +646,7 @@ with abas[1]:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, [
                         codigo.strip(), str(data_abertura), cliente.strip(), titulo.strip(),
-                        descricao.strip(), float(quantidade), responsavel_interno.strip(),
+                        descricao.strip(), float(quantidade), (responsavel_interno.strip() if responsavel_interno.strip() else "Avaliação"),
                         "Aberta", now_str(), now_str()
                     ])
                     criar_backup_automatico("apos_cadastro")
@@ -712,8 +753,8 @@ with abas[3]:
             st.write(f"**Código:** {ocorr['codigo']}")
             st.write(f"**Título:** {ocorr['titulo']}")
             st.write(f"**Cliente:** {ocorr['cliente']}")
-            st.write(f"**Data de emissão:** {ocorr['data_abertura']}")
-            st.write(f"**Responsável:** {ocorr.get('responsavel_interno') or ''}")
+            st.write(f"**Data de emissão:** {formatar_data_br(ocorr['data_abertura'])}")
+            st.write(f"**Responsável:** {ocorr.get('responsavel_interno') or 'Avaliação'}")
             st.write(f"**Descrição:** {ocorr['descricao']}")
             st.write(f"**Quantidade não conforme:** {ocorr['quantidade']}")
             st.write(f"**Status geral:** {ocorr['status_geral']}")
@@ -723,6 +764,8 @@ with abas[3]:
             if retornos_df.empty:
                 st.info("Nenhum retorno registrado para esta ocorrência.")
             else:
+                retornos_df["data_envio"] = retornos_df["data_envio"].apply(formatar_data_br)
+                retornos_df["created_at"] = retornos_df["created_at"].apply(formatar_data_br) if "created_at" in retornos_df.columns else retornos_df.get("created_at")
                 st.dataframe(retornos_df, use_container_width=True, hide_index=True)
 
 # =========================================================
@@ -746,13 +789,14 @@ with abas[4]:
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown("**Ocorrências por mês**")
-            serie_mes = base.groupby("mes_ref").size().sort_index()
+            base["mes_label"] = base["data_abertura"].apply(rotulo_mes_abrev)
+            base["mes_ordem"] = base["data_abertura"].dt.to_period("M").astype(str)
+            serie_mes = base.groupby(["mes_ordem", "mes_label"]).size().reset_index(name="qtd").sort_values("mes_ordem")
+            serie_mes_plot = pd.Series(serie_mes["qtd"].values, index=serie_mes["mes_label"].values)
             fig = plt.figure(figsize=(8, 4))
             ax = fig.add_subplot(111)
-            ax.bar(serie_mes.index, serie_mes.values)
+            preparar_barras_com_rotulos(ax, serie_mes_plot, rotacao=45, alinhamento="right")
             ax.set_xlabel("Mês")
-            ax.set_ylabel("Ocorrências")
-            plt.xticks(rotation=45)
             plt.tight_layout()
             st.pyplot(fig)
         with col_b:
@@ -760,10 +804,8 @@ with abas[4]:
             serie_cli = base.groupby("cliente").size().sort_values(ascending=False).head(10)
             fig = plt.figure(figsize=(8, 4))
             ax = fig.add_subplot(111)
-            ax.bar(serie_cli.index, serie_cli.values)
+            preparar_barras_com_rotulos(ax, serie_cli, rotacao=45, alinhamento="right")
             ax.set_xlabel("Cliente")
-            ax.set_ylabel("Ocorrências")
-            plt.xticks(rotation=45, ha="right")
             plt.tight_layout()
             st.pyplot(fig)
 
@@ -773,10 +815,8 @@ with abas[4]:
             serie_resp = base.groupby("responsavel_interno").size().sort_values(ascending=False).head(10)
             fig = plt.figure(figsize=(8, 4))
             ax = fig.add_subplot(111)
-            ax.bar(serie_resp.index, serie_resp.values)
+            preparar_barras_com_rotulos(ax, serie_resp, rotacao=45, alinhamento="right")
             ax.set_xlabel("Responsável")
-            ax.set_ylabel("Ocorrências")
-            plt.xticks(rotation=45, ha="right")
             plt.tight_layout()
             st.pyplot(fig)
         with col_d:
@@ -784,9 +824,9 @@ with abas[4]:
             serie_atraso = base.groupby("em_atraso").size().reindex(["Sim", "Não"], fill_value=0)
             fig = plt.figure(figsize=(8, 4))
             ax = fig.add_subplot(111)
-            ax.bar(serie_atraso.index, serie_atraso.values)
+            cores = ["red" if idx == "Sim" else "green" for idx in serie_atraso.index]
+            preparar_barras_com_rotulos(ax, serie_atraso, cores=cores)
             ax.set_xlabel("Situação")
-            ax.set_ylabel("Ocorrências")
             plt.tight_layout()
             st.pyplot(fig)
 
