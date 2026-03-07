@@ -32,6 +32,7 @@ ETAPAS = [
     "Análise de causa",
     "Plano de ação",
     "Envio de evidências",
+    "Improcedência",
 ]
 
 PRAZOS_DIAS = {
@@ -39,6 +40,7 @@ PRAZOS_DIAS = {
     "Análise de causa": 5,
     "Plano de ação": 10,
     "Envio de evidências": 15,
+    "Improcedência": 5,
 }
 
 STATUS_GERAIS = [
@@ -298,12 +300,15 @@ def aplicar_filtro_responsavel(df, responsavel):
     return df
 
 def atualizar_status_geral(ocorrencia_id):
+    improcedencia = buscar_retorno(ocorrencia_id, "Improcedência")
     cont = buscar_retorno(ocorrencia_id, "Contenção imediata")
     analise = buscar_retorno(ocorrencia_id, "Análise de causa")
     plano = buscar_retorno(ocorrencia_id, "Plano de ação")
     evidencia = buscar_retorno(ocorrencia_id, "Envio de evidências")
 
-    if evidencia:
+    if improcedencia:
+        status = "Concluída"
+    elif evidencia:
         status = "Concluída"
     elif plano:
         status = "Aguardando evidências"
@@ -348,15 +353,49 @@ def status_semaforo(ocorrencia, etapa):
     return "⚪ Pendente"
 
 def gerar_resumo_semaforo(ocorrencia):
+    ordem = {
+        "Contenção imediata": 1,
+        "Análise de causa": 2,
+        "Plano de ação": 3,
+        "Envio de evidências": 4,
+        "Improcedência": 99,
+    }
+
+    retornos = {etapa: buscar_retorno(int(ocorrencia["id"]), etapa) for etapa in ETAPAS}
+    improcedencia_retorno = retornos.get("Improcedência")
+    improcedencia = improcedencia_retorno is not None
+
+    maior_etapa_enviada = 0
+    data_etapa_mais_avancada = ""
+    for etapa, retorno in retornos.items():
+        if retorno and etapa != "Improcedência":
+            if ordem.get(etapa, 0) >= maior_etapa_enviada:
+                maior_etapa_enviada = ordem.get(etapa, 0)
+                data_etapa_mais_avancada = formatar_data_br(retorno.get("data_envio") or "")
+
     dados = []
     for etapa in ETAPAS:
         prazo = calcular_prazo_etapa(ocorrencia, etapa)
-        retorno = buscar_retorno(int(ocorrencia["id"]), etapa)
+        retorno = retornos.get(etapa)
+
+        if improcedencia:
+            status = "🟢 Concluída"
+            enviado_em = formatar_data_br(improcedencia_retorno.get("data_envio") or "")
+        elif retorno:
+            status = status_semaforo(ocorrencia, etapa)
+            enviado_em = formatar_data_br(retorno.get("data_envio") or "")
+        elif etapa != "Improcedência" and ordem.get(etapa, 0) < maior_etapa_enviada:
+            status = "🟢 Concluída"
+            enviado_em = data_etapa_mais_avancada
+        else:
+            status = status_semaforo(ocorrencia, etapa)
+            enviado_em = ""
+
         dados.append({
             "Etapa": etapa,
             "Prazo": "" if prazo is None else prazo.strftime("%d/%m/%Y"),
-            "Status": status_semaforo(ocorrencia, etapa),
-            "Enviado em": "" if not retorno else formatar_data_br(retorno.get("data_envio") or ""),
+            "Status": status,
+            "Enviado em": enviado_em,
         })
     return pd.DataFrame(dados)
 
@@ -369,7 +408,8 @@ def indicadores(df_ocorr):
     concluidas = len(df_ocorr[df_ocorr["status_geral"] == "Concluída"])
     atrasadas = 0
     for _, row in df_ocorr.iterrows():
-        if any("🔴" in status_semaforo(row.to_dict(), etapa) for etapa in ETAPAS):
+        resumo = gerar_resumo_semaforo(row.to_dict())
+        if resumo["Status"].astype(str).str.contains("🔴", na=False).any():
             atrasadas += 1
 
     return {"total": total, "abertas": abertas, "concluidas": concluidas, "atrasadas": atrasadas}
@@ -792,7 +832,8 @@ with abas[4]:
     else:
         atrasadas_lista = []
         for _, row in base_dash.iterrows():
-            atrasada = any("🔴" in status_semaforo(row.to_dict(), etapa) for etapa in ETAPAS)
+            resumo = gerar_resumo_semaforo(row.to_dict())
+            atrasada = resumo["Status"].astype(str).str.contains("🔴", na=False).any()
             atrasadas_lista.append("Sim" if atrasada else "Não")
         base_dash["em_atraso"] = atrasadas_lista
 
