@@ -381,13 +381,20 @@ with st.sidebar:
     st.write("3. Consultar e editar")
     st.write("4. Acompanhar dashboard")
 
+col_atualizar_1, col_atualizar_2 = st.columns([1, 5])
+with col_atualizar_1:
+    if st.button("🔄 Atualizar", use_container_width=True):
+        st.rerun()
+with col_atualizar_2:
+    st.caption("Use este botão após incluir ou editar uma ocorrência para recarregar os dados na tela.")
+
 abas = st.tabs([
-    "Painel",
-    "Registrar ocorrência",
-    "Registrar retorno",
-    "Consulta / edição",
-    "Dashboard",
-    "Exportação"
+    "PAINEL (GERAL)",
+    "REGISTRAR OCORRÊNCIA",
+    "EDITAR OCRRÊNCIA / STATUS",
+    "CONSULTA OCORRÊNCIA",
+    "DASHBORAD",
+    "EXPORTAR"
 ])
 
 # =========================================================
@@ -485,6 +492,7 @@ with abas[1]:
                         now_str()
                     ])
                     st.success("Ocorrência registrada com sucesso.")
+                    st.info("Clique em Atualizar para recarregar o painel com a nova ocorrência.")
                 except sqlite3.IntegrityError:
                     st.error("Já existe uma ocorrência cadastrada com esse código.")
 
@@ -628,6 +636,7 @@ with abas[2]:
 
                         atualizar_status_geral(int(ocorr["id"]))
                         st.success("Retorno registrado com sucesso no banco de dados da ocorrência.")
+                        st.info("Clique em Atualizar para recarregar os dados após a edição.")
 
 # =========================================================
 # ABA 4 - CONSULTA / EDIÇÃO
@@ -691,6 +700,7 @@ with abas[3]:
                     ])
                     atualizar_status_geral(int(ocorr["id"]))
                     st.success("Dados da ocorrência atualizados com sucesso.")
+                    st.info("Clique em Atualizar para refletir as alterações no painel.")
 
             st.markdown("### Histórico de retornos")
             retornos_df = listar_retornos_por_ocorrencia(int(ocorr["id"]))
