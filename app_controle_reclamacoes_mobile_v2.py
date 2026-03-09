@@ -468,7 +468,13 @@ def importar_ocorrencias_excel(arquivo_excel):
     try:
         df = pd.read_excel(arquivo_excel)
     except Exception as e:
-        return {"ok": False, "mensagem": f"Erro ao ler o arquivo Excel: {e}", "incluidas": 0, "ignoradas": 0}
+        return {
+            "ok": False,
+            "mensagem": f"Erro ao ler o arquivo Excel: {e}",
+            "incluidas": 0,
+            "ignoradas": 0,
+            "ja_existentes": 0,
+        }
 
     df.columns = [str(c).strip() for c in df.columns]
     faltantes = [c for c in HEADERS_IMPORTACAO_PADRAO if c not in set(df.columns)]
@@ -478,10 +484,23 @@ def importar_ocorrencias_excel(arquivo_excel):
             "mensagem": "A planilha precisa seguir exatamente o cabeçalho padrão: " + ", ".join(HEADERS_IMPORTACAO_PADRAO),
             "incluidas": 0,
             "ignoradas": 0,
+            "ja_existentes": 0,
         }
 
     incluidas = 0
     ignoradas = 0
+    ja_existentes = 0
+
+    base_atual = listar_ocorrencias()
+    codigos_existentes = set()
+    if not base_atual.empty and "codigo" in base_atual.columns:
+        codigos_existentes = {
+            str(c).strip()
+            for c in base_atual["codigo"].fillna("").astype(str).tolist()
+            if str(c).strip() != ""
+        }
+
+    codigos_processados_planilha = set()
     criar_backup_automatico("antes_importacao")
 
     for _, row in df.iterrows():
@@ -493,8 +512,14 @@ def importar_ocorrencias_excel(arquivo_excel):
             ignoradas += 1
             continue
 
-        if buscar_ocorrencia_por_codigo(codigo):
+        if codigo in codigos_processados_planilha:
             ignoradas += 1
+            continue
+
+        codigos_processados_planilha.add(codigo)
+
+        if codigo in codigos_existentes:
+            ja_existentes += 1
             continue
 
         data_abertura = pd.to_datetime(row.get("Data de emissão"), errors="coerce")
@@ -517,9 +542,16 @@ def importar_ocorrencias_excel(arquivo_excel):
             quantidade, responsavel, "Aberta", now_str(), now_str()
         ])
         incluidas += 1
+        codigos_existentes.add(codigo)
 
     criar_backup_automatico("apos_importacao")
-    return {"ok": True, "mensagem": "Importação concluída.", "incluidas": incluidas, "ignoradas": ignoradas}
+    return {
+        "ok": True,
+        "mensagem": "Importação concluída com comparação por número da ocorrência.",
+        "incluidas": incluidas,
+        "ignoradas": ignoradas,
+        "ja_existentes": ja_existentes,
+    }
 
 def excluir_ocorrencia_por_comando(codigo, comando, usuario, motivo):
     codigo = str(codigo).strip()
@@ -651,8 +683,13 @@ with abas[0]:
         if arquivo_excel is not None and st.button("Importar planilha", key="btn_importar_planilha"):
             resultado = importar_ocorrencias_excel(arquivo_excel)
             if resultado["ok"]:
-                st.success(f'{resultado["mensagem"]} Incluídas: {resultado["incluidas"]}. Ignoradas: {resultado["ignoradas"]}.')
-                st.info("Os dados foram gravados no banco de dados do aplicativo e um backup foi gerado.")
+                st.success(
+                    f'{resultado["mensagem"]} '
+                    f'Incluídas: {resultado["incluidas"]}. '
+                    f'Já existentes no sistema: {resultado.get("ja_existentes", 0)}. '
+                    f'Ignoradas: {resultado["ignoradas"]}.'
+                )
+                st.info("O sistema comparou o número da ocorrência da planilha com os códigos já cadastrados no app e incluiu somente as ocorrências que ainda não existiam.")
             else:
                 st.error(resultado["mensagem"])
 
