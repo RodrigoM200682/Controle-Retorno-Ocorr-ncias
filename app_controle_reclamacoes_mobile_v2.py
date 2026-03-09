@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 # CONFIGURAÇÃO
 # =========================================================
 st.set_page_config(
-    page_title="Retorno de Reclamações de Clientes - RRC-RS 2026_v_14",
+    page_title="Retorno de Reclamações de Clientes - RRC-RS 2026_v_15",
     page_icon="📋",
     layout="wide",
 )
@@ -21,9 +21,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data_app"
 DATA_DIR.mkdir(exist_ok=True)
 
-DB_PATH = DATA_DIR / "controle_reclamacoes_v14.db"
-UPLOAD_DIR = DATA_DIR / "uploads_v14"
-BACKUP_DIR = DATA_DIR / "backups_v14"
+DB_PATH = DATA_DIR / "controle_reclamacoes_v15.db"
+UPLOAD_DIR = DATA_DIR / "uploads_v15"
+BACKUP_DIR = DATA_DIR / "backups_v15"
 UPLOAD_DIR.mkdir(exist_ok=True)
 BACKUP_DIR.mkdir(exist_ok=True)
 
@@ -216,22 +216,6 @@ def criar_backup_automatico(tag="manual"):
     shutil.copy2(DB_PATH, destino)
     return destino
 
-def resetar_banco_dados(senha):
-    if str(senha).strip() != "QualidadeRS":
-        return False, "Senha incorreta."
-
-    criar_backup_automatico("antes_reset_total")
-
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM retornos")
-    cur.execute("DELETE FROM ocorrencias")
-    cur.execute("DELETE FROM log_exclusoes")
-    conn.commit()
-    conn.close()
-
-    return True, "Banco de dados resetado com sucesso."
-
 def listar_backups():
     arquivos = sorted(BACKUP_DIR.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
     dados = []
@@ -367,6 +351,14 @@ def status_semaforo(ocorrencia, etapa):
     if dias_restantes <= 2:
         return "🟡 Próximo do prazo"
     return "⚪ Pendente"
+
+def obter_etapa_atual(ocorrencia):
+    resumo = gerar_resumo_semaforo(ocorrencia)
+    for _, linha in resumo.iterrows():
+        status = str(linha["Status"])
+        if "⚪" in status or "🟡" in status or "🔴" in status:
+            return str(linha["Etapa"])
+    return "Concluída"
 
 def gerar_resumo_semaforo(ocorrencia):
     ordem = {
@@ -655,10 +647,13 @@ def aplicar_filtros_globais(df):
 
 base_filtrada = aplicar_filtros_globais(base_global)
 
+if "codigo_selecionado_painel" not in st.session_state:
+    st.session_state["codigo_selecionado_painel"] = ""
+
 # =========================================================
 # TOPO
 # =========================================================
-st.title("📋 Retorno de Reclamações de Clientes - RRC-RS 2026_v_14")
+st.title("📋 Retorno de Reclamações de Clientes - RRC-RS 2026_v_15")
 if responsavel_filtro == "Todos":
     st.caption("Visualização geral de todas as ocorrências.")
 else:
@@ -710,11 +705,134 @@ with abas[0]:
                 st.error(resultado["mensagem"])
 
     if not base_filtrada.empty:
-        visao = base_filtrada[["codigo", "data_abertura", "cliente", "titulo", "quantidade", "responsavel_interno", "status_geral"]].copy()
-        visao["data_abertura"] = visao["data_abertura"].apply(formatar_data_br)
-        visao["responsavel_interno"] = visao["responsavel_interno"].apply(limpar_responsavel)
-        visao.columns = ["Código", "Data", "Cliente", "Título", "Quantidade", "Responsável", "Status geral"]
-        st.dataframe(visao, use_container_width=True, hide_index=True)
+        visao = base_filtrada.copy()
+        visao["Etapa do retorno"] = visao.apply(lambda row: obter_etapa_atual(row.to_dict()), axis=1)
+        visao = visao[["codigo", "titulo", "status_geral", "Etapa do retorno"]].copy()
+        visao.columns = ["Código", "Título", "Status", "Etapa do retorno"]
+
+        st.markdown("### Lista de reclamações")
+        cab1, cab2, cab3, cab4, cab5 = st.columns([1.1, 3.2, 1.5, 1.8, 0.8])
+        cab1.markdown("**Código**")
+        cab2.markdown("**Título**")
+        cab3.markdown("**Status**")
+        cab4.markdown("**Etapa do retorno**")
+        cab5.markdown("**Ação**")
+        st.markdown("---")
+        for _, row in visao.iterrows():
+            col_a, col_b, col_c, col_d, col_e = st.columns([1.1, 3.2, 1.5, 1.8, 0.8])
+            col_a.write(row["Código"])
+            col_b.write(row["Título"])
+            col_c.write(row["Status"])
+            col_d.write(row["Etapa do retorno"])
+            if col_e.button("Abrir", key=f"abrir_{row['Código']}"):
+                st.session_state["codigo_selecionado_painel"] = row["Código"]
+                st.rerun()
+            st.markdown("---")
+
+        codigo_sel = st.session_state.get("codigo_selecionado_painel", "")
+        if codigo_sel:
+            ocorr_sel = buscar_ocorrencia_por_codigo(codigo_sel)
+            if ocorr_sel:
+                st.markdown("## Ocorrência selecionada")
+                st.info(f"Painel detalhado da ocorrência {codigo_sel}.")
+                d1, d2, d3 = st.columns(3)
+                d1.write(f"**Código:** {ocorr_sel['codigo']}")
+                d1.write(f"**Cliente:** {ocorr_sel['cliente']}")
+                d2.write(f"**Título:** {ocorr_sel['titulo']}")
+                d2.write(f"**Status geral:** {ocorr_sel['status_geral']}")
+                d3.write(f"**Responsável:** {limpar_responsavel(ocorr_sel.get('responsavel_interno'))}")
+                d3.write(f"**Data de emissão:** {formatar_data_br(ocorr_sel['data_abertura'])}")
+                st.write(f"**Descrição:** {ocorr_sel['descricao']}")
+                st.write(f"**Quantidade não conforme:** {ocorr_sel['quantidade']}")
+
+                st.markdown("### Detalhe das etapas")
+                st.dataframe(gerar_resumo_semaforo(ocorr_sel), use_container_width=True, hide_index=True)
+
+                ac1, ac2 = st.columns(2)
+                with ac1:
+                    st.markdown("### Registrar retorno")
+                    etapa_sel = st.selectbox("Etapa do retorno", ETAPAS, key="painel_etapa_retorno")
+                    retorno_existente = buscar_retorno(int(ocorr_sel["id"]), etapa_sel)
+                    with st.form("form_retorno_painel", clear_on_submit=False):
+                        p1, p2 = st.columns(2)
+                        with p1:
+                            data_envio = st.date_input("Data do envio", value=date.today(), format="DD/MM/YYYY", key="painel_data_envio")
+                            hora_envio = st.text_input("Hora do envio", value=datetime.now().strftime("%H:%M"), key="painel_hora_envio")
+                            responsavel_envio = st.text_input("Responsável pelo envio *", value="" if not retorno_existente else str(retorno_existente.get("responsavel_envio") or ""), key="painel_resp_envio")
+                            contato_cliente = st.text_input("Pessoa responsável no cliente *", value="" if not retorno_existente else str(retorno_existente.get("contato_cliente") or ""), key="painel_contato_cliente")
+                        with p2:
+                            email_cliente = st.text_input("E-mail do cliente", value="" if not retorno_existente else str(retorno_existente.get("email_cliente") or ""), key="painel_email_cliente")
+                            titulo_email = st.text_input("Título do e-mail *", value="" if not retorno_existente else str(retorno_existente.get("titulo_email") or ""), key="painel_titulo_email")
+                            comprovacao_envio = st.text_input("Comprovação do envio", value="" if not retorno_existente else str(retorno_existente.get("comprovacao_envio") or ""), key="painel_comprovacao")
+                        descricao_retorno = st.text_area("Descrição do retorno", value="" if not retorno_existente else str(retorno_existente.get("descricao_retorno") or ""), height=120, key="painel_desc_retorno")
+                        arquivo = st.file_uploader("Anexar evidência", key="painel_arquivo_retorno")
+                        salvar_retorno_painel = st.form_submit_button("Salvar retorno da ocorrência")
+                        if salvar_retorno_painel:
+                            if not responsavel_envio or not contato_cliente or not titulo_email:
+                                st.error("Preencha os campos obrigatórios: responsável pelo envio, pessoa responsável no cliente e título do e-mail.")
+                            else:
+                                criar_backup_automatico("antes_retorno_painel")
+                                anexo_path = None
+                                if arquivo is not None:
+                                    anexo_path = salvar_arquivo(arquivo, ocorr_sel["codigo"], etapa_sel)
+                                elif retorno_existente:
+                                    anexo_path = retorno_existente.get("anexo_path")
+                                if retorno_existente:
+                                    run_exec("""
+                                        UPDATE retornos
+                                        SET data_envio = ?, hora_envio = ?, titulo_email = ?, contato_cliente = ?,
+                                            email_cliente = ?, responsavel_envio = ?, descricao_retorno = ?,
+                                            comprovacao_envio = ?, anexo_path = ?, updated_at = ?
+                                        WHERE id = ?
+                                    """, [
+                                        str(data_envio), hora_envio, titulo_email, contato_cliente, email_cliente,
+                                        responsavel_envio, descricao_retorno, comprovacao_envio, anexo_path, now_str(),
+                                        int(retorno_existente["id"])
+                                    ])
+                                else:
+                                    run_exec("""
+                                        INSERT INTO retornos (
+                                            ocorrencia_id, etapa, data_envio, hora_envio, titulo_email,
+                                            contato_cliente, email_cliente, responsavel_envio,
+                                            descricao_retorno, comprovacao_envio, anexo_path,
+                                            created_at, updated_at
+                                        )
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    """, [
+                                        int(ocorr_sel["id"]), etapa_sel, str(data_envio), hora_envio, titulo_email,
+                                        contato_cliente, email_cliente, responsavel_envio, descricao_retorno,
+                                        comprovacao_envio, anexo_path, now_str(), now_str()
+                                    ])
+                                atualizar_status_geral(int(ocorr_sel["id"]))
+                                criar_backup_automatico("apos_retorno_painel")
+                                st.success("Retorno registrado com sucesso para a ocorrência selecionada.")
+                                st.rerun()
+
+                with ac2:
+                    st.markdown("### Detalhe do retorno")
+                    retornos_df = listar_retornos_por_ocorrencia(int(ocorr_sel["id"]))
+                    if retornos_df.empty:
+                        st.info("Nenhum retorno registrado para esta ocorrência.")
+                    else:
+                        retornos_df["data_envio"] = retornos_df["data_envio"].apply(formatar_data_br)
+                        st.dataframe(retornos_df, use_container_width=True, hide_index=True)
+
+                    st.markdown("### Excluir ocorrência")
+                    usuario_exclusao_painel = st.text_input("Usuário responsável pela exclusão", key="painel_usuario_exclusao")
+                    motivo_exclusao_painel = st.text_area("Motivo da exclusão", key="painel_motivo_exclusao", height=100)
+                    comando_exclusao_painel = st.text_input("Comando de exclusão", placeholder=f"EXCLUIR {ocorr_sel['codigo']}", key="painel_cmd_exclusao")
+                    if st.button("Excluir ocorrência selecionada", key="painel_btn_excluir"):
+                        ok, msg = excluir_ocorrencia_por_comando(ocorr_sel["codigo"], comando_exclusao_painel, usuario_exclusao_painel, motivo_exclusao_painel)
+                        if ok:
+                            st.success(msg)
+                            st.session_state["codigo_selecionado_painel"] = ""
+                            st.rerun()
+                        else:
+                            st.error(msg)
+
+                if st.button("Limpar seleção da ocorrência", key="limpar_selecao_ocorrencia"):
+                    st.session_state["codigo_selecionado_painel"] = ""
+                    st.rerun()
     else:
         st.info("Nenhuma ocorrência encontrada para o filtro selecionado.")
 
@@ -887,7 +1005,7 @@ with abas[4]:
         for _, row in base_dash.iterrows():
             resumo = gerar_resumo_semaforo(row.to_dict())
             atrasada = resumo["Status"].astype(str).str.contains("🔴", na=False).any()
-            atrasadas_lista.append("Sim" if atrasada else "Não")
+            atrasadas_lista.append("Em atraso" if atrasada else "Concluído")
         base_dash["em_atraso"] = atrasadas_lista
 
         col_a, col_b = st.columns(2)
@@ -925,8 +1043,8 @@ with abas[4]:
 
         with col_d:
             st.markdown("**Ocorrências em atraso**")
-            serie_atraso = base_dash.groupby("em_atraso").size().reindex(["Sim", "Não"], fill_value=0)
-            cores = ["red" if idx == "Sim" else "green" for idx in serie_atraso.index]
+            serie_atraso = base_dash.groupby("em_atraso").size().reindex(["Em atraso", "Concluído"], fill_value=0)
+            cores = ["red" if idx == "Em atraso" else "green" for idx in serie_atraso.index]
             fig = plt.figure(figsize=(8, 4))
             ax = fig.add_subplot(111)
             preparar_barras_com_rotulos(ax, serie_atraso, cores=cores)
@@ -951,7 +1069,7 @@ with abas[5]:
                 log_df = log_df[log_df["codigo_ocorrencia"].astype(str).isin(codigos_filtrados)] if not log_df.empty else log_df
                 ocorr_df["data_abertura"] = ocorr_df["data_abertura"].apply(formatar_data_br)
 
-            arquivo_saida = BASE_DIR / "exportacao_controle_reclamacoes_v14.xlsx"
+            arquivo_saida = BASE_DIR / "exportacao_controle_reclamacoes_v15.xlsx"
             with pd.ExcelWriter(arquivo_saida, engine="openpyxl") as writer:
                 ocorr_df.to_excel(writer, sheet_name="Ocorrencias", index=False)
                 ret_df.to_excel(writer, sheet_name="Retornos", index=False)
@@ -961,7 +1079,7 @@ with abas[5]:
                 st.download_button(
                     label="Baixar Excel",
                     data=f,
-                    file_name="exportacao_controle_reclamacoes_v14.xlsx",
+                    file_name="exportacao_controle_reclamacoes_v15.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
@@ -998,26 +1116,4 @@ with abas[5]:
         log_df["deleted_at"] = log_df["deleted_at"].apply(formatar_data_br)
         st.dataframe(log_df, use_container_width=True, hide_index=True)
 
-    st.markdown("---")
-    st.markdown("## ⚠ RESET BANCO DE DADOS")
-    st.warning(
-        """
-Esta ação irá excluir TODAS as informações do aplicativo.
-
-• Ocorrências
-• Retornos
-• Histórico de exclusões
-
-Use somente se for necessário reiniciar completamente o sistema.
-"""
-    )
-    senha_reset = st.text_input("Digite a senha para resetar o banco", type="password", key="senha_reset_banco")
-    if st.button("RESETAR BANCO DE DADOS", key="btn_reset_banco"):
-        ok, msg = resetar_banco_dados(senha_reset)
-        if ok:
-            st.success(msg)
-            st.info("Clique em Atualizar para recarregar o aplicativo com o banco vazio.")
-        else:
-            st.error(msg)
-
-st.caption("Versão 14: inclui reset total do banco com backup automático prévio, senha de segurança e aviso explícito de exclusão total.")
+st.caption("Versão 15: filtro global por responsável em todas as telas, datas no padrão brasileiro, gráficos com rótulos no topo e tratamento automático do responsável vazio como Avaliação.")
