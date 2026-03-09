@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 # CONFIGURAÇÃO
 # =========================================================
 st.set_page_config(
-    page_title="Retorno de Reclamações de Clientes - RRC-RS 2026_v_13",
+    page_title="Retorno de Reclamações de Clientes - RRC-RS 2026_v_14",
     page_icon="📋",
     layout="wide",
 )
@@ -21,9 +21,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data_app"
 DATA_DIR.mkdir(exist_ok=True)
 
-DB_PATH = DATA_DIR / "controle_reclamacoes_v13.db"
-UPLOAD_DIR = DATA_DIR / "uploads_v13"
-BACKUP_DIR = DATA_DIR / "backups_v13"
+DB_PATH = DATA_DIR / "controle_reclamacoes_v14.db"
+UPLOAD_DIR = DATA_DIR / "uploads_v14"
+BACKUP_DIR = DATA_DIR / "backups_v14"
 UPLOAD_DIR.mkdir(exist_ok=True)
 BACKUP_DIR.mkdir(exist_ok=True)
 
@@ -215,6 +215,22 @@ def criar_backup_automatico(tag="manual"):
     destino = BACKUP_DIR / nome
     shutil.copy2(DB_PATH, destino)
     return destino
+
+def resetar_banco_dados(senha):
+    if str(senha).strip() != "QualidadeRS":
+        return False, "Senha incorreta."
+
+    criar_backup_automatico("antes_reset_total")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM retornos")
+    cur.execute("DELETE FROM ocorrencias")
+    cur.execute("DELETE FROM log_exclusoes")
+    conn.commit()
+    conn.close()
+
+    return True, "Banco de dados resetado com sucesso."
 
 def listar_backups():
     arquivos = sorted(BACKUP_DIR.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -642,7 +658,7 @@ base_filtrada = aplicar_filtros_globais(base_global)
 # =========================================================
 # TOPO
 # =========================================================
-st.title("📋 Retorno de Reclamações de Clientes - RRC-RS 2026_v_13")
+st.title("📋 Retorno de Reclamações de Clientes - RRC-RS 2026_v_14")
 if responsavel_filtro == "Todos":
     st.caption("Visualização geral de todas as ocorrências.")
 else:
@@ -935,7 +951,7 @@ with abas[5]:
                 log_df = log_df[log_df["codigo_ocorrencia"].astype(str).isin(codigos_filtrados)] if not log_df.empty else log_df
                 ocorr_df["data_abertura"] = ocorr_df["data_abertura"].apply(formatar_data_br)
 
-            arquivo_saida = BASE_DIR / "exportacao_controle_reclamacoes_v13.xlsx"
+            arquivo_saida = BASE_DIR / "exportacao_controle_reclamacoes_v14.xlsx"
             with pd.ExcelWriter(arquivo_saida, engine="openpyxl") as writer:
                 ocorr_df.to_excel(writer, sheet_name="Ocorrencias", index=False)
                 ret_df.to_excel(writer, sheet_name="Retornos", index=False)
@@ -945,7 +961,7 @@ with abas[5]:
                 st.download_button(
                     label="Baixar Excel",
                     data=f,
-                    file_name="exportacao_controle_reclamacoes_v13.xlsx",
+                    file_name="exportacao_controle_reclamacoes_v14.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
@@ -982,4 +998,26 @@ with abas[5]:
         log_df["deleted_at"] = log_df["deleted_at"].apply(formatar_data_br)
         st.dataframe(log_df, use_container_width=True, hide_index=True)
 
-st.caption("Versão 13: filtro global por responsável em todas as telas, datas no padrão brasileiro, gráficos com rótulos no topo e tratamento automático do responsável vazio como Avaliação.")
+    st.markdown("---")
+    st.markdown("## ⚠ RESET BANCO DE DADOS")
+    st.warning(
+        """
+Esta ação irá excluir TODAS as informações do aplicativo.
+
+• Ocorrências
+• Retornos
+• Histórico de exclusões
+
+Use somente se for necessário reiniciar completamente o sistema.
+"""
+    )
+    senha_reset = st.text_input("Digite a senha para resetar o banco", type="password", key="senha_reset_banco")
+    if st.button("RESETAR BANCO DE DADOS", key="btn_reset_banco"):
+        ok, msg = resetar_banco_dados(senha_reset)
+        if ok:
+            st.success(msg)
+            st.info("Clique em Atualizar para recarregar o aplicativo com o banco vazio.")
+        else:
+            st.error(msg)
+
+st.caption("Versão 14: inclui reset total do banco com backup automático prévio, senha de segurança e aviso explícito de exclusão total.")
